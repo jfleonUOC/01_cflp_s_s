@@ -1,0 +1,9 @@
+# Files / Patterns to be ignored
+inputs/
+lib/
+test/
+*.csv
+*.xlsx
+*.html
+*.log
+*cache*
