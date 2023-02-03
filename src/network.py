@@ -10,6 +10,15 @@ import numpy as np
 import pandas as pd
 
 
+def action_decorator(action):
+    action_name = action.__name__
+    # action_param = func.__code__.co_varnames[:func.__code__.co_argcount]
+    def inner(*args, **kwargs):
+        print(f"> action: {action_name}", end="; ")
+        print(f"-> {args[1:]}")
+        return action(*args, **kwargs)
+    return inner
+
 class Net:
     """
     Class for handling nets
@@ -43,9 +52,9 @@ class Net:
         self.check_complete()
         for client in self.data.clients:
             fac_namex = data.cost_matrix.loc[client.id].idxmin()
-            [ok,net_mod,balance] = Action(self).assign_cli_to_fac(client, self.data.fac_dict[fac_namex])
+            [ok,new_net,balance] = Action(self).assign_cli_to_fac(client, self.data.fac_dict[fac_namex])
             if ok:
-                self = net_mod
+                self = new_net
         self.check_complete()
         return self
 
@@ -73,7 +82,7 @@ class Net:
             # get facility index
             fac_idx = self.connection_matrix.loc[client.id].idxmax()
             # get client-facility cost
-            variable_cost += self.data.cost_matrix.loc[client.id][fac_idx]
+            variable_cost += self.data.cost_matrix.loc[client.id, fac_idx]
         # total cost
         self.total_cost = fixed_cost + variable_cost
         if verbose:
@@ -178,7 +187,7 @@ class Net:
             fac_id = int(fac_name.replace("f",""))
             cli_id = int(cli_name.replace("c",""))
             cost = row["value"]
-            if self.connection_matrix.loc[cli_id][fac_id] == 1:
+            if self.connection_matrix.loc[cli_id, fac_id] == 1:
                 net_graph.add_edge(
                     fac_name,
                     cli_name,
@@ -196,85 +205,93 @@ class Action:
     TODO: deepcopy net and assing new id?
     """
     def __init__(self, net):
-        self.net = net
-        self.net_mod = copy.copy(net)
+        self.old_net = copy.copy(net)
+        self.new_net = copy.copy(net)
         # if not provided, assign action id based on timestamp
 
         self.feasible:bool = True
         self.balance:float = 0.0
 
+    def __str__(self) -> str:
+        action_summary = f"""
+        feasible: {self.feasible}
+        balance: {self.balance}
+        """
+        return action_summary
 
+
+    @action_decorator
     def open_fac(self, facility):
         """
         open a given facility
         """
         # check if already open
-        if facility in self.net.opened_facilities:
+        if facility in self.old_net.opened_facilities:
             print(f"Facility {facility.id} already opened")
             self.feasible = False
-            return self.feasible, self.net, self.balance
+            return self.feasible, self.old_net, self.balance
         # add to net opened facilities
-        self.net_mod.opened_facilities.append(facility)
+        self.new_net.opened_facilities.append(facility)
         # check net
-        if not self.net_mod.check_valid():
+        if not self.new_net.check_valid():
             self.feasible = False
-            return self.feasible, self.net, self.balance
+            return self.feasible, self.old_net, self.balance
         # calculate balance
-        cost_ini = self.net.total_cost
-        cost_end = self.net_mod.calc_cost(verbose=False)
+        cost_ini = self.old_net.total_cost
+        cost_end = self.new_net.calc_cost(verbose=False)
         self.balance = cost_ini - cost_end
 
         return self
 
+    @action_decorator
     def close_fac(self, facility, verbose=False):
         """
         close a given facility
         """
         # check if already close
-        if facility not in self.net.opened_facilities:
+        if facility not in self.old_net.opened_facilities:
             print(f"Facility {facility.id} already close")
             self.feasible = False
-            return self.feasible, self.net, self.balance
+            return self.feasible, self.old_net, self.balance
         # remove assigned clients
-        list_assigned_cli = self.net.get_assigned_cli_to_fac(facility)
+        list_assigned_cli = self.old_net.get_assigned_cli_to_fac(facility)
         for client in list_assigned_cli:
-            self.net.assigned_clients.remove(client)
+            self.old_net.assigned_clients.remove(client)
         # remove from connection matrix
-        self.net_mod.connection_matrix[facility.id] = 0
+        self.new_net.connection_matrix[facility.id] = 0
         # remove fron net opened facilities
-        self.net_mod.opened_facilities.remove(facility)
+        self.new_net.opened_facilities.remove(facility)
         # check net
-        # if not self.net_mod.check_valid():
+        # if not self.new_net.check_valid():
         #     self.feasible = False
-        #     return self.feasible, self.net, self.balance
+        #     return self.feasible, self.old_net, self.balance
         # calculate balance
-        cost_ini = self.net.total_cost
-        cost_end = self.net_mod.calc_cost(verbose=False)
+        cost_ini = self.old_net.total_cost
+        cost_end = self.new_net.calc_cost(verbose=False)
         self.balance = cost_ini - cost_end
 
         return self
 
-
+    @action_decorator
     def assign_cli_to_fac(self,client,facility):
         """
         assign client to facility
         """
         # check if already assigned
-        if self.net.connection_matrix.loc[client.id][facility.id] == 1:
+        if self.old_net.connection_matrix.loc[client.id, facility.id] == 1:
             print(f"Client {client.id} already assigned to Facility {facility.id}")
             self.feasible = False
-            return self.feasible, self.net, self.balance
-        self.net_mod.connection_matrix.loc[client.id][facility.id] = 1
+            return self.feasible, self.old_net, self.balance
+        self.new_net.connection_matrix.loc[client.id, facility.id] = 1
         print(f"Client {client.id} assigned to Facility {facility.id}")
         # print(self.connection_matrix)
-        self.net_mod.assigned_clients.append(client)
+        self.new_net.assigned_clients.append(client)
         # TODO: calculate balance
-        cost_ini = self.net.total_cost
-        cost_end = self.net_mod.calc_cost(verbose=False)
+        cost_ini = self.old_net.total_cost
+        cost_end = self.new_net.calc_cost(verbose=False)
         self.balance = cost_ini - cost_end
 
         return self
-
 
 
 if __name__ == "__main__":
@@ -289,8 +306,17 @@ if __name__ == "__main__":
     print(net.connection_matrix)
     net.calc_cost()
     action = Action(net).close_fac(data.fac_dict[1])
-    action2 = Action(net).assign_cli_to_fac(data.fac_dict[1],data.cli_dict[1])
+    action2 = Action(net).assign_cli_to_fac(data.cli_dict[1],data.fac_dict[1])
+    new = action2.new_net
+    old = action2.old_net
     print(action2.balance)
     print(action2)
+    print("net")
     print(net.connection_matrix)
     net.calc_cost()
+    print("new")
+    print(new.connection_matrix)
+    new.calc_cost()
+    print("old")
+    print(old.connection_matrix)
+    old.calc_cost()
