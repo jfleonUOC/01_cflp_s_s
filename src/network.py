@@ -5,6 +5,7 @@
 from importer import Importer
 from pyvis.network import Network
 import copy
+import textwrap
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -30,17 +31,44 @@ class Net:
         self.assigned_clients = []
         self.connection_matrix = self.data.cost_matrix.astype(int)
         self.total_cost:float = 0.0
+        self.updated = True
+        self.complete = False
+        self.valid = False
 
         self.initilize()
       
+    def __str__(self) -> str:
+        net_summary = f"""
+        net INFO: id - {self.id}
+        - valid: {self.valid}
+        - total cost: {self.total_cost:+}
+        """
+        return textwrap.dedent(net_summary)
+
     def initilize(self):
         """
         All facilities are opened
         No customer is assigned to facilities
         """
         self.connection_matrix[:] = 0
-        self.opened_facilities = data.facilities
-        self.assigned_clients = []
+        self.update_net(verbose=False)
+        # self.opened_facilities = data.facilities
+        # self.assigned_clients = []
+
+    def update_net(self, check=False, verbose=True):
+        """
+        Update opened facilities and assigned clients from connection matrix
+        """
+        self.assigned_clients = self.get_assigned_clients()
+        self.opened_facilities = self.get_open_facilities()
+        if verbose:
+            print("> net updated")
+            print(f"facilities: {self.opened_facilities}")
+            print(f"clients: {self.assigned_clients}")
+        if check:
+            self.complete = self.is_complete()
+            self.valid = self.is_valid()
+        self.updated = True
 
     def dummy_greedy_net(self):
         """
@@ -49,13 +77,13 @@ class Net:
         2. is valid - demand restrictions are not violated
         3. greedy: the client minimum cost is used for assigning facilities
         """
-        self.check_complete()
+        self.is_complete()
         for client in self.data.clients:
             fac_namex = data.cost_matrix.loc[client.id].idxmin()
             [ok,new_net,balance] = Action(self).assign_cli_to_fac(client, self.data.fac_dict[fac_namex])
             if ok:
                 self = new_net
-        self.check_complete()
+        self.is_complete()
         return self
 
     def calc_cost(self, verbose=True) -> float:
@@ -66,10 +94,13 @@ class Net:
             variable_cost = Sum(assigned_clients)
         """
         # check net first
-        # if not self.check_valid():
+        # if not self.is_valid():
         #     self.total_cost = 0.0
         #     print("invalid net -> cost initialized to 0.0")
         #     return
+        # update net
+        if not self.updated:
+            self.update_net(verbose)
         # initialize costs
         fixed_cost:float = 0.0
         variable_cost:float = 0.0
@@ -90,9 +121,10 @@ class Net:
         return self.total_cost
 
 
-    def check_valid(self):
+    def is_valid(self):
         """
         Check if the net is valid
+        0. net is complete
         1. each client is assigned to only one facility
         2. capacity from facilities is not exceded
         """
@@ -113,7 +145,7 @@ class Net:
         print("Valid net")
         return True
 
-    def check_complete(self):
+    def is_complete(self):
         """
         check if net is complete:
         1. connection matrix matches net attributes
@@ -146,6 +178,18 @@ class Net:
             list_assigned_cli.append(self.data.cli_dict[id])
         return list_assigned_cli
 
+    def get_open_facilities(self) -> list:
+        """
+        get assigned facilites from connection matrix
+        """
+        list_assigned_fac = []
+        bool_mask = (self.connection_matrix != 0).any(axis=0)
+        # list_assigned_fac_id = self.connection_matrix.index[(self.connection_matrix != 0).any(axis=0)].tolist()
+        list_assigned_fac_id = bool_mask.index[bool_mask].tolist()
+        for id in list_assigned_fac_id:
+            list_assigned_fac.append(self.data.fac_dict[id])
+        return list_assigned_fac
+
     def get_assigned_cli_to_fac(self, facility) -> list:
         """
         get assigned clients to a given facility from connection matrix
@@ -155,6 +199,12 @@ class Net:
         for id in list_assigned_cli_id:
             list_assigned_cli.append(self.data.cli_dict[id])
         return list_assigned_cli
+
+    def get_fac_from_cli(self, client):
+        """
+        TODO: get corresponding facility from client
+        """
+        return
 
     def calc_agg_demand_facility(self, facility) -> float:
         """
@@ -205,118 +255,85 @@ class Action:
     TODO: deepcopy net and assing new id?
     """
     def __init__(self, net):
-        self.old_net = copy.copy(net)
-        self.new_net = copy.copy(net)
+        self.old_net = copy.deepcopy(net)
+        self.new_net = copy.deepcopy(net)
         # if not provided, assign action id based on timestamp
 
+        self.done = False
         self.feasible:bool = True
         self.balance:float = 0.0
 
     def __str__(self) -> str:
         action_summary = f"""
-        feasible: {self.feasible}
-        balance: {self.balance}
+        action INFO:
+        - feasible: {self.feasible}
+        - balance: {self.balance:+}
         """
-        return action_summary
+        return textwrap.dedent(action_summary)
 
-
-    @action_decorator
-    def open_fac(self, facility):
+    def calculate_balance(self):
         """
-        open a given facility
+        TODO: Calculate action balance
         """
-        # check if already open
-        if facility in self.old_net.opened_facilities:
-            print(f"Facility {facility.id} already opened")
-            self.feasible = False
-            return self.feasible, self.old_net, self.balance
-        # add to net opened facilities
-        self.new_net.opened_facilities.append(facility)
-        # check net
-        if not self.new_net.check_valid():
-            self.feasible = False
-            return self.feasible, self.old_net, self.balance
-        # calculate balance
         cost_ini = self.old_net.total_cost
         cost_end = self.new_net.calc_cost(verbose=False)
-        self.balance = cost_ini - cost_end
+        balance = cost_end - cost_ini
 
-        return self
-
-    @action_decorator
-    def close_fac(self, facility, verbose=False):
-        """
-        close a given facility
-        """
-        # check if already close
-        if facility not in self.old_net.opened_facilities:
-            print(f"Facility {facility.id} already close")
-            self.feasible = False
-            return self.feasible, self.old_net, self.balance
-        # remove assigned clients
-        list_assigned_cli = self.old_net.get_assigned_cli_to_fac(facility)
-        for client in list_assigned_cli:
-            self.old_net.assigned_clients.remove(client)
-        # remove from connection matrix
-        self.new_net.connection_matrix[facility.id] = 0
-        # remove fron net opened facilities
-        self.new_net.opened_facilities.remove(facility)
-        # check net
-        # if not self.new_net.check_valid():
-        #     self.feasible = False
-        #     return self.feasible, self.old_net, self.balance
-        # calculate balance
-        cost_ini = self.old_net.total_cost
-        cost_end = self.new_net.calc_cost(verbose=False)
-        self.balance = cost_ini - cost_end
-
-        return self
+        return balance
 
     @action_decorator
-    def assign_cli_to_fac(self,client,facility):
+    def assign_cli_to_fac(self,client,facility,verbose=True):
         """
         assign client to facility
         """
+        self.new_net.updated = False
         # check if already assigned
         if self.old_net.connection_matrix.loc[client.id, facility.id] == 1:
             print(f"Client {client.id} already assigned to Facility {facility.id}")
             self.feasible = False
-            return self.feasible, self.old_net, self.balance
+            return self
+        # assign client to facility
         self.new_net.connection_matrix.loc[client.id, facility.id] = 1
-        print(f"Client {client.id} assigned to Facility {facility.id}")
-        # print(self.connection_matrix)
-        self.new_net.assigned_clients.append(client)
-        # TODO: calculate balance
-        cost_ini = self.old_net.total_cost
-        cost_end = self.new_net.calc_cost(verbose=False)
-        self.balance = cost_ini - cost_end
-
+        # update net
+        self.new_net.update_net(verbose=False)
+        # calculate balance
+        self.balance = self.calculate_balance()
+        if verbose:
+            print(f"Client {client.id} assigned to Facility {facility.id}")
+            print(f"balance: {self.balance:+}")
         return self
 
+    @action_decorator
+    def unassign_cli_to_fac(self,client,facility,verbose=True):
+        """
+        unassign client to facility
+        """
+        self.new_net.updated = False
+        # check if already unassigned
+        if self.old_net.connection_matrix.loc[client.id, facility.id] == 0:
+            print(f"Client {client.id} is not assigned to Facility {facility.id}")
+            self.feasible = False
+            return self
+        # unassign client to facility
+        self.new_net.connection_matrix.loc[client.id, facility.id] = 0
+        # update net
+        self.new_net.update_net(verbose=False)
+        # calculate balance
+        self.balance = self.calculate_balance()
+        if verbose:
+            print(f"Client {client.id} unassigned to Facility {facility.id}")
+            print(f"balance: {self.balance:+}")
+        return self
 
 if __name__ == "__main__":
     file_path = "inputs/Holmberg_Instances/p2"
     data = Importer(file_path)
     net = Net(1, data)
-    # print(data.cost_matrix)
-    # net.draw_net()
-    # net.calc_cost()
-    # open_fac = Action(net).open_fac(data.fac_dict[3])
-    # net = net.dummy_greedy_net()
+
+    net = Action(net).assign_cli_to_fac(data.cli_dict[3],data.fac_dict[4]).new_net
+    net = Action(net).assign_cli_to_fac(data.cli_dict[15],data.fac_dict[9]).new_net
+    net = Action(net).unassign_cli_to_fac(data.cli_dict[3],data.fac_dict[4]).new_net
+
     print(net.connection_matrix)
-    net.calc_cost()
-    action = Action(net).close_fac(data.fac_dict[1])
-    action2 = Action(net).assign_cli_to_fac(data.cli_dict[1],data.fac_dict[1])
-    new = action2.new_net
-    old = action2.old_net
-    print(action2.balance)
-    print(action2)
-    print("net")
-    print(net.connection_matrix)
-    net.calc_cost()
-    print("new")
-    print(new.connection_matrix)
-    new.calc_cost()
-    print("old")
-    print(old.connection_matrix)
-    old.calc_cost()
+    print(net)
+    net.draw_net()
