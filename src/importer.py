@@ -15,6 +15,7 @@ class Importer():
         self.facilities = []
         self.clients = []
         self.cost_matrix = pd.DataFrame()
+        self.marginal_cost_matrix = pd.DataFrame()
 
         self.fac_dict = dict()
         self.cli_dict = dict()
@@ -22,6 +23,7 @@ class Importer():
         self.status = False
 
         self.import_file()
+        self.calculate_marginal_cost()
     
     def import_file(self):
         """
@@ -68,6 +70,30 @@ class Importer():
         print("importer end")
         print(20*"*")
 
+    def calculate_marginal_cost(self):
+        """
+        calculate marginal cost matrix
+        marginal cost: difference between the cost associated with facility and second best facility
+        """
+        print("Calculating marginal cost matrix ...")
+        new_row_df_list = []
+        row_indices = []
+        for row_index, row in self.cost_matrix.iterrows():
+            new_row = {}
+            for col_index, col in row.items():
+                # get minimum in row except current
+                filtered_row = row[(row.index != col_index)]
+                min_in_row = filtered_row.min()
+                # substract current to minimum
+                marginal_cost = min_in_row - col
+                new_row[col_index] = [marginal_cost]
+            new_row_df = pd.DataFrame.from_dict(new_row)
+            new_row_df_list.append(new_row_df)
+            row_indices.append(row_index)
+        self.marginal_cost_matrix = pd.concat(new_row_df_list, ignore_index=True)
+        self.marginal_cost_matrix.index = row_indices
+        print(self.marginal_cost_matrix)
+        print(20*"*")
 
 if __name__ == "__main__":
     file_path = "inputs/Holmberg_Instances/p2"

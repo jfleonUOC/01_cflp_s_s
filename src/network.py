@@ -34,6 +34,7 @@ class Net:
         self.updated = True
         self.complete = False
         self.valid = False
+        self.capacity = False
 
         self.initilize()
       
@@ -55,7 +56,7 @@ class Net:
         # self.opened_facilities = data.facilities
         # self.assigned_clients = []
 
-    def update_net(self, check=False, verbose=True):
+    def update_net(self, check=True, verbose=True):
         """
         Update opened facilities and assigned clients from connection matrix
         """
@@ -68,23 +69,8 @@ class Net:
         if check:
             self.complete = self.is_complete()
             self.valid = self.is_valid()
+            self.capacity = self.is_capacity_ok()
         self.updated = True
-
-    def dummy_greedy_net(self):
-        """
-        create dummy greedy net that:
-        1. is single-source - one client per facility
-        2. is valid - demand restrictions are not violated
-        3. greedy: the client minimum cost is used for assigning facilities
-        """
-        self.is_complete()
-        for client in self.data.clients:
-            fac_namex = data.cost_matrix.loc[client.id].idxmin()
-            [ok,new_net,balance] = Action(self).assign_cli_to_fac(client, self.data.fac_dict[fac_namex])
-            if ok:
-                self = new_net
-        self.is_complete()
-        return self
 
     def calc_cost(self, verbose=True) -> float:
         """
@@ -120,53 +106,55 @@ class Net:
             print(f"total cost of net = {self.total_cost}")
         return self.total_cost
 
+    def is_complete(self):
+        """
+        check if net is complete: there are not unassigned clients
+        """
+        if set(self.assigned_clients) != set(self.data.clients):
+            print("Incomplete net: there are unassigned clients")
+            # TODO: find unassigned clients
+            return False
+        print("Complete net")
+        return True
 
     def is_valid(self):
         """
-        Check if the net is valid
-        0. net is complete
-        1. each client is assigned to only one facility
-        2. capacity from facilities is not exceded
+        Check if the net is valid: each client is assigned to only one facility
         """
-        # each client is assigned to only one facility
-        if self.connection_matrix.values.sum() != len(self.data.clients):
-            print("Invalid net: more than one client assigned to a facility")
-            # TODO: find multi-assigned facilities
+        if self.connection_matrix.values.sum() > len(self.data.clients):
+            print("Invalid net: clients assigned more than once to a facility")
+            # TODO: find multi-assigned clients
+            # print(self.connection_matrix)
             return False
-        # capacity is not exceded
+        self.valid = True
+        print("Valid net")
+        return True
+
+    def is_capacity_ok(self) -> bool:
+        """
+        Check if capacity from facilities is not exceeded
+        """
+        capacity_ok = True
         for facility in self.opened_facilities:
             # calculate aggregated demand
             agg_demand = self.calc_agg_demand_facility(facility)
             # compare with facility capacity
             if facility.capacity < agg_demand:
-                print(f"Invalid net: Facility {facility.id} capacity is exceded")
-                return False
-        
-        print("Valid net")
-        return True
+                print(f"{facility} capacity is exceeded")
+                capacity_ok = False
+        if capacity_ok:
+            print("Capacity not exceeded")
+        self.capacity = capacity_ok
+        return capacity_ok
 
-    def is_complete(self):
+    def check(self) -> bool:
         """
-        check if net is complete:
-        1. connection matrix matches net attributes
-        2. there are not unassigned clients
-        3. TODO: each open facility need to have at least one customer assigned ??
+        perform complete check
         """
-        # connection matrix missmatch with net attributes (connection matrix is the reference)
-        list_clients = self.get_assigned_clients()
-        if set(self.assigned_clients) != set(list_clients):
-            print("Incomplete net: connection matrix missmatched")
-            self.assigned_clients = list_clients
-            print("fixed")
-        # TODO: facilities missmatch?
-        # no unassigned clients
-        if set(self.assigned_clients) != set(self.data.clients):
-            print("Incomplete net: there are unassigned clients")
-            # TODO: find unassigned clients
+        if self.is_complete() and self.is_valid() and self.is_capacity_ok():
+            return True
+        else:
             return False
-
-        print("Complete net")
-        return True
 
     def get_assigned_clients(self) -> list:
         """
@@ -219,6 +207,50 @@ class Net:
         
         return agg_demand
 
+    def find_fac_greedy_on_cost(self,client,facility_list=[]):
+        """
+        find a facility for a given client based on minimum cost
+        only facilities in facility_list can be used
+        """
+        # filter cost_matrix
+        if facility_list:
+            fac_list_ids = [facility.id for facility in facility_list]
+            filtered_cost_matrix = self.data.cost_matrix[fac_list_ids]
+        else:
+            filtered_cost_matrix = self.data.cost_matrix
+        fac_namex = filtered_cost_matrix.loc[client.id].idxmin()
+        facility = self.data.fac_dict[fac_namex]
+        return facility
+
+    def find_fac_greedy_on_marginal_cost(self,client,facility_list=[]):
+        """
+        find a facility for a given client based on minimum marginal cost
+        only facilities in facility_list can be used
+        marginal cost: difference between assignment cost of a client to 2 facilities
+        """
+        # if facility list is empty use all facilities
+        if not facility_list:
+            facility_list = self.data.facilities
+        prefs = self.get_fac_prefs()
+        client_position_dict = {}
+        for facility in facility_list:
+            # create a dictionary with the preference position by facility
+            client_position_dict[facility.id] = prefs[facility.id].index(client.id)
+        fac_idx = min(client_position_dict, key=client_position_dict.get)
+        facility = self.data.fac_dict[fac_idx]
+        return facility
+    
+    def get_fac_prefs(self) -> dict:
+        """
+        get facility preferences from marginal cost matrix
+        """
+        prefs_dict = {}
+        for facility in self.data.facilities:
+            marg_prefs = self.data.marginal_cost_matrix[facility.id]
+            marg_prefs_sorted = marg_prefs.sort_values(ascending=False)
+            prefs_dict[facility.id] = marg_prefs_sorted.index.to_list()
+        return prefs_dict
+
     def draw_net(self):
         """
         Create graph of net
@@ -246,7 +278,7 @@ class Net:
                     label = str(cost))
         net_graph.show_buttons(filter_=['physics'])
         net_graph.toggle_physics(True)
-        net_graph.show(f"net_graph_{self.id}.html")
+        net_graph.show(f"out/net_{self.id}.html")
 
 
 class Action:
@@ -255,6 +287,7 @@ class Action:
     TODO: deepcopy net and assing new id?
     """
     def __init__(self, net):
+        self.net = net
         self.old_net = copy.deepcopy(net)
         self.new_net = copy.deepcopy(net)
         # if not provided, assign action id based on timestamp
@@ -289,17 +322,23 @@ class Action:
         self.new_net.updated = False
         # check if already assigned
         if self.old_net.connection_matrix.loc[client.id, facility.id] == 1:
-            print(f"Client {client.id} already assigned to Facility {facility.id}")
+            print(f"{client} already assigned to {facility}")
             self.feasible = False
             return self
         # assign client to facility
         self.new_net.connection_matrix.loc[client.id, facility.id] = 1
         # update net
         self.new_net.update_net(verbose=False)
+        # check feasibility
+        if not self.new_net.is_valid() or not self.new_net.is_capacity_ok():
+            print(f"Unfeasible action: {client} cannot be assigned to {facility}")
+            self.feasible = False
+            self.new_net = self.net
+            return self
         # calculate balance
         self.balance = self.calculate_balance()
         if verbose:
-            print(f"Client {client.id} assigned to Facility {facility.id}")
+            print(f"{client} assigned to {facility}")
             print(f"balance: {self.balance:+}")
         return self
 
@@ -311,7 +350,7 @@ class Action:
         self.new_net.updated = False
         # check if already unassigned
         if self.old_net.connection_matrix.loc[client.id, facility.id] == 0:
-            print(f"Client {client.id} is not assigned to Facility {facility.id}")
+            print(f"{client} is not assigned to {facility}")
             self.feasible = False
             return self
         # unassign client to facility
@@ -321,8 +360,94 @@ class Action:
         # calculate balance
         self.balance = self.calculate_balance()
         if verbose:
-            print(f"Client {client.id} unassigned to Facility {facility.id}")
+            print(f"{client} unassigned to {facility}")
             print(f"balance: {self.balance:+}")
+        return self
+
+    @action_decorator
+    def close_facility_greedy(self,facility,verbose=True):
+        """
+        OLD - DELETE IF NOT USED
+        Composed action
+        Close given facility and relocates clients using cost matrix in a greedy fashion
+        """
+        self.new_net.updated = False
+        open_facilities = self.net.get_open_facilities()
+        clients = self.net.get_assigned_cli_to_fac(facility)
+        # check if already unassigned
+        if facility not in open_facilities:
+            print(f"{facility} is already closed")
+            self.feasible = False
+            return self
+        open_fac_without_current = list(open_facilities)
+        open_fac_without_current.remove(facility)
+        for client in clients:
+            # unassign client
+            act_unassign= Action(self.new_net).unassign_cli_to_fac(client,facility,verbose=False)
+            self.new_net = act_unassign.new_net
+            # find the most convenient facility that is not closed and assign client
+            best_fac = None
+            while not best_fac:
+                candidate_fac = self.net.find_fac_greedy_on_cost(client,open_fac_without_current)
+                act_assign= Action(self.new_net).assign_cli_to_fac(client,candidate_fac,verbose=True)
+                if act_assign.feasible:
+                    self.new_net = act_assign.new_net
+                    best_fac = candidate_fac
+                else:
+                    open_fac_without_current.remove(candidate_fac)
+
+        # calculate balance
+        self.balance = self.calculate_balance()
+        if verbose:
+            print(f"{facility} closed:")
+            print(f" - greedy client reassignation: {clients}")
+            print(f" - balance: {self.balance:+}")
+
+        return self
+
+    @action_decorator
+    def close_facility(self,facility,how="greedy_cost",verbose=True):
+        """
+        Composed action
+        Close given facility and relocates clients using:
+            - "greedy_cost": cost matrix in a greedy fashion
+            - "greedy_marginal": marginal cost matrix in a greedy fashion
+        """
+        self.new_net.updated = False
+        open_facilities = self.net.get_open_facilities()
+        clients = self.net.get_assigned_cli_to_fac(facility)
+        # check if already unassigned
+        if facility not in open_facilities:
+            print(f"{facility} is already closed")
+            self.feasible = False
+            return self
+        open_fac_without_current = list(open_facilities)
+        open_fac_without_current.remove(facility)
+        for client in clients:
+            # unassign client
+            act_unassign= Action(self.new_net).unassign_cli_to_fac(client,facility,verbose=False)
+            self.new_net = act_unassign.new_net
+            # find the most convenient facility that is not closed and assign client
+            best_fac = None
+            while not best_fac:
+                if how == "greedy_cost":
+                    candidate_fac = self.net.find_fac_greedy_on_cost(client,open_fac_without_current)
+                elif how == "greedy_marginal":
+                    candidate_fac = self.net.find_fac_greedy_on_marginal_cost(client,open_fac_without_current)
+                act_assign= Action(self.new_net).assign_cli_to_fac(client,candidate_fac,verbose=True)
+                if act_assign.feasible:
+                    self.new_net = act_assign.new_net
+                    best_fac = candidate_fac
+                else:
+                    open_fac_without_current.remove(candidate_fac)
+
+        # calculate balance
+        self.balance = self.calculate_balance()
+        if verbose:
+            print(f"{facility} closed:")
+            print(f" - greedy client reassignation: {clients}")
+            print(f" - balance: {self.balance:+}")
+
         return self
 
 if __name__ == "__main__":
