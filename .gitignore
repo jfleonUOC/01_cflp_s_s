@@ -1,5 +1,6 @@
 # Files / Patterns to be ignored
 inputs/
+inputs_ref/
 lib/
 test/
 out/

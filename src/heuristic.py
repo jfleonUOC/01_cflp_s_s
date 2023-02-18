@@ -17,23 +17,6 @@ class Heuristic:
     def execute(self):
         pass
 
-# TODO: duplicated - delete
-def find_fac_greedy_on_cost_old(net,client,facility_list=[]):
-    """
-    OLD - DELTE IF NOT USED
-    find a facility for a given client based on minimum cost
-    only facilities in facility_list can be used
-    """
-    # filter cost_matrix
-    if facility_list:
-        fac_list_ids = [facility.id for facility in facility_list]
-        filtered_cost_matrix = net.data.cost_matrix[fac_list_ids]
-    else:
-        filtered_cost_matrix = net.data.cost_matrix
-    fac_namex = filtered_cost_matrix.loc[client.id].idxmin()
-    facility = net.data.fac_dict[fac_namex]
-    return facility
-
 def dummy_greedy_net(data, name="dummy_1", how="greedy_cost"):
     """
     create dummy greedy net that:
@@ -44,15 +27,23 @@ def dummy_greedy_net(data, name="dummy_1", how="greedy_cost"):
     net = Net(name, data)
 
     for client in data.clients:
-        if how == "greedy_cost":
-            facility = net.find_fac_greedy_on_cost(client)
-        if how == "greedy_marginal":
-            facility = net.find_fac_greedy_on_marginal_cost(client)
-        act = Action(net).assign_cli_to_fac(client, facility)
-        if act.feasible:
-            net = act.new_net
+        feasible_fac = False
+        facility_list = copy.copy(net.data.facilities)
+        while not feasible_fac:
+            if how == "greedy_cost":
+                facility = net.find_fac_greedy_on_cost(client,facility_list)
+            if how == "greedy_marginal":
+                facility = net.find_fac_greedy_on_marginal_cost(client,facility_list)
+            act = Action(net).assign_cli_to_fac(client, facility)
+            feasible_fac = act.feasible
+            print(facility_list)
+            print(facility)
+            facility_list.remove(facility)
+        net = act.new_net
+    print(20*"*")
+    print("Greedy net created")
     net.check()
-    
+    print(20*"*")
     return net
 
 def dummy_greedy_heur(how="greedy_cost"):
@@ -69,38 +60,6 @@ def dummy_greedy_heur(how="greedy_cost"):
 
     return net
 
-def calculate_savings_old(net) -> dict:
-    """
-    OLD - DELETE IF NOT USED
-    calculate savings list (dictionary)
-    TODO: sorted or biased randomized?
-    """
-    savings = {}
-    # get open facilities
-    open_facilities = net.get_open_facilities()
-    # print(open_facilities)
-    for facility in open_facilities:
-        clients = net.get_assigned_cli_to_fac(facility)
-        s_net = copy.deepcopy(net)
-        fac_saving = 0.0
-        open_fac_without_current = list(open_facilities)
-        open_fac_without_current.remove(facility)
-        for client in clients:
-            # unassign client
-            act_unassign= Action(s_net).unassign_cli_to_fac(client,facility)
-            fac_saving += act_unassign.balance
-            s_net = act_unassign.new_net
-            # find the most convenient facility that is not closed and assign client
-            best_fac = net.find_fac_greedy_on_cost(client,open_fac_without_current)
-            act_assign= Action(s_net).assign_cli_to_fac(client,best_fac)
-            fac_saving += act_assign.balance
-            s_net = act_assign.new_net
-        savings[facility] = fac_saving
-    # sort list
-    savings_sorted = dict(sorted(savings.items(), key=lambda item: item[1]))
-    print(savings_sorted)
-
-    return savings_sorted
 
 def calculate_savings(net, how="greedy_cost") -> dict:
     """
@@ -133,11 +92,18 @@ def savings_heur(initial="greedy_cost", save="greedy_cost", close="greedy_cost")
     2.2.3. positive balance
     2.3. execute facility closure
     """
-    folder = "Holmberg_Instances"
-    instance = "p2"
+    folder = "Holmberg_Instances/"
+    # folder = "OR-Library_Instances/"
+    # folder = "Yang_Instances/"
+    subfolder = ""
+    # subfolder = "30-200/"
+    instance = "p13"
+    # instance = "cap134"
+    # instance = "30-200-1.dat"
+
+    file_path = "inputs/"+folder+subfolder+instance
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     output_name = folder+"_"+instance+"_"+timestamp
-    file_path = "inputs/"+folder+"/"+instance
     data = Importer(file_path)
 
     # 1. initial assignment
@@ -173,15 +139,16 @@ def savings_heur(initial="greedy_cost", save="greedy_cost", close="greedy_cost")
             print(f"> limit reached: {iteration} iterations")
             break
 
-    print(net.connection_matrix)
+    # print(net.connection_matrix)
     print(net)
-    net.draw_net()
+    # net.draw_net()
     return net
 
 
 if __name__ == "__main__":
-    dummy_greedy_heur(how="greedy_marginal")
-    # savings_heur(initial="greedy_marginal", save="greedy_marginal", close="greedy_marginal")
+    # dummy_greedy_heur(how="greedy_marginal")
+    # savings_heur(initial="greedy_cost", save="greedy_cost", close="greedy_cost")
+    savings_heur(initial="greedy_marginal", save="greedy_marginal", close="greedy_marginal")
 
     # TEST 1 - assign greedy with list of facilities
     # file_path = "inputs/Holmberg_Instances/p2"

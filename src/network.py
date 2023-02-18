@@ -41,7 +41,9 @@ class Net:
     def __str__(self) -> str:
         net_summary = f"""
         net INFO: id - {self.id}
+        - complete: {self.complete}
         - valid: {self.valid}
+        - capacity: {self.capacity}
         - total cost: {self.total_cost:+}
         """
         return textwrap.dedent(net_summary)
@@ -56,7 +58,7 @@ class Net:
         # self.opened_facilities = data.facilities
         # self.assigned_clients = []
 
-    def update_net(self, check=True, verbose=True):
+    def update_net(self, check=True, verbose=False):
         """
         Update opened facilities and assigned clients from connection matrix
         """
@@ -72,7 +74,7 @@ class Net:
             self.capacity = self.is_capacity_ok()
         self.updated = True
 
-    def calc_cost(self, verbose=True) -> float:
+    def calc_cost(self, verbose=False) -> float:
         """
         Evaluate the total cost of the net
         total_cost = fixed_cost + variable_cost
@@ -113,8 +115,10 @@ class Net:
         if set(self.assigned_clients) != set(self.data.clients):
             print("Incomplete net: there are unassigned clients")
             # TODO: find unassigned clients
+            self.complete = False
             return False
         print("Complete net")
+        self.complete = True
         return True
 
     def is_valid(self):
@@ -125,6 +129,7 @@ class Net:
             print("Invalid net: clients assigned more than once to a facility")
             # TODO: find multi-assigned clients
             # print(self.connection_matrix)
+            self.valid = False
             return False
         self.valid = True
         print("Valid net")
@@ -311,7 +316,6 @@ class Action:
         cost_ini = self.old_net.total_cost
         cost_end = self.new_net.calc_cost(verbose=False)
         balance = cost_end - cost_ini
-
         return balance
 
     @action_decorator
@@ -328,7 +332,7 @@ class Action:
         # assign client to facility
         self.new_net.connection_matrix.loc[client.id, facility.id] = 1
         # update net
-        self.new_net.update_net(verbose=False)
+        # self.new_net.update_net(verbose=False)
         # check feasibility
         if not self.new_net.is_valid() or not self.new_net.is_capacity_ok():
             print(f"Unfeasible action: {client} cannot be assigned to {facility}")
@@ -356,7 +360,7 @@ class Action:
         # unassign client to facility
         self.new_net.connection_matrix.loc[client.id, facility.id] = 0
         # update net
-        self.new_net.update_net(verbose=False)
+        # self.new_net.update_net(verbose=False)
         # calculate balance
         self.balance = self.calculate_balance()
         if verbose:
@@ -364,46 +368,6 @@ class Action:
             print(f"balance: {self.balance:+}")
         return self
 
-    @action_decorator
-    def close_facility_greedy(self,facility,verbose=True):
-        """
-        OLD - DELETE IF NOT USED
-        Composed action
-        Close given facility and relocates clients using cost matrix in a greedy fashion
-        """
-        self.new_net.updated = False
-        open_facilities = self.net.get_open_facilities()
-        clients = self.net.get_assigned_cli_to_fac(facility)
-        # check if already unassigned
-        if facility not in open_facilities:
-            print(f"{facility} is already closed")
-            self.feasible = False
-            return self
-        open_fac_without_current = list(open_facilities)
-        open_fac_without_current.remove(facility)
-        for client in clients:
-            # unassign client
-            act_unassign= Action(self.new_net).unassign_cli_to_fac(client,facility,verbose=False)
-            self.new_net = act_unassign.new_net
-            # find the most convenient facility that is not closed and assign client
-            best_fac = None
-            while not best_fac:
-                candidate_fac = self.net.find_fac_greedy_on_cost(client,open_fac_without_current)
-                act_assign= Action(self.new_net).assign_cli_to_fac(client,candidate_fac,verbose=True)
-                if act_assign.feasible:
-                    self.new_net = act_assign.new_net
-                    best_fac = candidate_fac
-                else:
-                    open_fac_without_current.remove(candidate_fac)
-
-        # calculate balance
-        self.balance = self.calculate_balance()
-        if verbose:
-            print(f"{facility} closed:")
-            print(f" - greedy client reassignation: {clients}")
-            print(f" - balance: {self.balance:+}")
-
-        return self
 
     @action_decorator
     def close_facility(self,facility,how="greedy_cost",verbose=True):
@@ -440,14 +404,12 @@ class Action:
                     best_fac = candidate_fac
                 else:
                     open_fac_without_current.remove(candidate_fac)
-
         # calculate balance
         self.balance = self.calculate_balance()
         if verbose:
             print(f"{facility} closed:")
             print(f" - greedy client reassignation: {clients}")
             print(f" - balance: {self.balance:+}")
-
         return self
 
 if __name__ == "__main__":
