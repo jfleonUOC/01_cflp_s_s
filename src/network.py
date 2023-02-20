@@ -6,6 +6,7 @@ from importer import Importer
 from pyvis.network import Network
 import copy
 import textwrap
+import inspect
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -13,11 +14,19 @@ import pandas as pd
 
 def action_decorator(action):
     action_name = action.__name__
-    # action_param = func.__code__.co_varnames[:func.__code__.co_argcount]
+    # action_param = action.__code__.co_varnames[:action.__code__.co_argcount]
+    # action_signature_args = inspect.getfullargspec(action).args
+    # action_signature_args = inspect.signature(action)
     def inner(*args, **kwargs):
-        print(f"> action: {action_name}", end="; ")
-        print(f"-> {args[1:]}")
-        return action(*args, **kwargs)
+        if "verbose" in kwargs:
+            if kwargs["verbose"] == True:
+                print(f"> action: {action_name}", end="; ")
+                print(f"-> {args[1:]}")
+                return action(*args, **kwargs)
+            else:
+                return action(*args, **kwargs)
+        else:
+            return action(*args, **kwargs)
     return inner
 
 class Net:
@@ -108,49 +117,54 @@ class Net:
             print(f"total cost of net = {self.total_cost}")
         return self.total_cost
 
-    def is_complete(self):
+    def is_complete(self, verbose=False) -> bool:
         """
         check if net is complete: there are not unassigned clients
         """
         if set(self.assigned_clients) != set(self.data.clients):
-            print("Incomplete net: there are unassigned clients")
+            if verbose:
+                print("Incomplete net: there are unassigned clients")
             # TODO: find unassigned clients
             self.complete = False
             return False
-        print("Complete net")
+        if verbose:
+            print("Complete net")
         self.complete = True
         return True
 
-    def is_valid(self):
+    def is_valid(self, verbose=False) -> bool:
         """
         Check if the net is valid: each client is assigned to only one facility
         """
         if self.connection_matrix.values.sum() > len(self.data.clients):
-            print("Invalid net: clients assigned more than once to a facility")
+            if verbose:
+                print("Invalid net: clients assigned more than once to a facility")
             # TODO: find multi-assigned clients
             # print(self.connection_matrix)
             self.valid = False
             return False
+        if verbose:
+            print("Valid net")
         self.valid = True
-        print("Valid net")
         return True
 
-    def is_capacity_ok(self) -> bool:
+    def is_capacity_ok(self, verbose=False) -> bool:
         """
         Check if capacity from facilities is not exceeded
         """
-        capacity_ok = True
         for facility in self.opened_facilities:
             # calculate aggregated demand
             agg_demand = self.calc_agg_demand_facility(facility)
             # compare with facility capacity
             if facility.capacity < agg_demand:
-                print(f"{facility} capacity is exceeded")
-                capacity_ok = False
-        if capacity_ok:
+                if verbose:
+                    print(f"{facility} capacity is exceeded")
+                self.capacity = False
+                return False
+        if verbose:
             print("Capacity not exceeded")
-        self.capacity = capacity_ok
-        return capacity_ok
+        self.capacity = True
+        return True
 
     def check(self) -> bool:
         """
@@ -319,14 +333,15 @@ class Action:
         return balance
 
     @action_decorator
-    def assign_cli_to_fac(self,client,facility,verbose=True):
+    def assign_cli_to_fac(self,client,facility,verbose=False):
         """
         assign client to facility
         """
         self.new_net.updated = False
         # check if already assigned
         if self.old_net.connection_matrix.loc[client.id, facility.id] == 1:
-            print(f"{client} already assigned to {facility}")
+            if verbose:
+                print(f"{client} already assigned to {facility}")
             self.feasible = False
             return self
         # assign client to facility
@@ -335,7 +350,8 @@ class Action:
         # self.new_net.update_net(verbose=False)
         # check feasibility
         if not self.new_net.is_valid() or not self.new_net.is_capacity_ok():
-            print(f"Unfeasible action: {client} cannot be assigned to {facility}")
+            if verbose:
+                print(f"Unfeasible action: {client} cannot be assigned to {facility}")
             self.feasible = False
             self.new_net = self.net
             return self
@@ -347,7 +363,7 @@ class Action:
         return self
 
     @action_decorator
-    def unassign_cli_to_fac(self,client,facility,verbose=True):
+    def unassign_cli_to_fac(self,client,facility,verbose=False):
         """
         unassign client to facility
         """
@@ -377,6 +393,7 @@ class Action:
             - "greedy_cost": cost matrix in a greedy fashion
             - "greedy_marginal": marginal cost matrix in a greedy fashion
         """
+        print(f"----------> NEW CLOSE (test): {facility} <-----------")
         self.new_net.updated = False
         open_facilities = self.net.get_open_facilities()
         clients = self.net.get_assigned_cli_to_fac(facility)
@@ -385,14 +402,18 @@ class Action:
             print(f"{facility} is already closed")
             self.feasible = False
             return self
-        open_fac_without_current = list(open_facilities)
-        open_fac_without_current.remove(facility)
+        # open_fac_without_current = list(open_facilities)
+        # open_fac_without_current.remove(facility)
         for client in clients:
+            # reset list of open facilities for the current client
+            open_fac_without_current = list(open_facilities)
+            open_fac_without_current.remove(facility)
             # unassign client
-            act_unassign= Action(self.new_net).unassign_cli_to_fac(client,facility,verbose=False)
+            act_unassign= Action(self.new_net).unassign_cli_to_fac(client,facility,verbose=True)
             self.new_net = act_unassign.new_net
             # find the most convenient facility that is not closed and assign client
             best_fac = None
+            print(f"----------> find facility loop: {open_fac_without_current}")
             while not best_fac:
                 if how == "greedy_cost":
                     candidate_fac = self.net.find_fac_greedy_on_cost(client,open_fac_without_current)
@@ -403,7 +424,16 @@ class Action:
                     self.new_net = act_assign.new_net
                     best_fac = candidate_fac
                 else:
-                    open_fac_without_current.remove(candidate_fac)
+                    print(f"---> candidate discarded: {candidate_fac}")
+                    print(f"remaining fac: {open_fac_without_current}")
+                    try:
+                        open_fac_without_current.remove(candidate_fac)
+                    except ValueError:
+                        if verbose:
+                            print(f"> {facility} cannot be closed, {client} cannot be reasigned")
+                        self.feasible = False
+                        self.balance = float("inf")
+                        return self
         # calculate balance
         self.balance = self.calculate_balance()
         if verbose:

@@ -27,6 +27,7 @@ class Importer():
         if self.import_file_path == "":
             self.import_file_path = self.instance_selector()
         self.instance_type = self.import_file_path.split("/")[1]
+        self.instance = self.import_file_path.split("/")[2]
         self.import_file()
         self.calculate_marginal_cost()
     
@@ -127,9 +128,12 @@ class Importer():
                     facilities = [facility for facility in range(1, number_facilities + 1)]
                     sub_block_4 = file.readline().strip()
                     costs = [float(number) for number in sub_block_4.split()]
-                    if len(costs) < len(facilities):
+                    while len(costs) < len(facilities):
                         sub_block_n = file.readline().strip()
                         costs.extend([float(number) for number in sub_block_n.split()])
+                    # print(costs)
+                    # print(client)
+                    # print(facilities)
                     client_costs = pd.DataFrame([costs], index=[client], columns=facilities)
                     self.cost_matrix = pd.concat([self.cost_matrix, client_costs])
             else:
@@ -176,15 +180,13 @@ class Importer():
         print(20*"*")
 
 if __name__ == "__main__":
-    # folder = "Holmberg_Instances/"
+    folder = "Holmberg_Instances/"
     # folder = "OR-Library_Instances/"
-    folder = "Yang_Instances/"
-    subfolder = ""
-    # subfolder = "30-200/"
-    # instance = "p13"
+    # folder = "Yang_Instances/"
+    instance = "p26"
     # instance = "cap61"
-    instance = "30-200-1"
-    file_path = "inputs/"+folder+subfolder+instance
-    # data = Importer(file_path)
-    data = Importer()
+    # instance = "30-200-1"
+    file_path = "inputs/"+folder+instance
+    data = Importer(file_path)
+    # data = Importer()
     # print(data.cost_matrix)
